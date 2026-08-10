@@ -44,14 +44,17 @@ static void decide(const Config *c, const Cell *g, Action *a, int i, int tick, u
     if (x.species==HERBIVORE && choose(c,g,i,CARNIVORE,seed,tick,21)>=0) { j=choose(c,g,i,EMPTY,seed,tick,22); if (j>=0) { a->kind=ACT_MOVE; a->target=j; } return; }
     j=choose(c,g,i,EMPTY,seed,tick,23); if (j>=0) { a->kind=ACT_MOVE; a->target=j; }
     int threshold=x.species==HERBIVORE ? 8 : 12, probability=x.species==HERBIVORE ? 20 : 15;
-    if (energy>=threshold && hunger==0 && chance(seed,tick,i,24,probability)) { j=choose(c,g,i,EMPTY,seed,tick,25); if (j>=0) { a->kind=ACT_BREED; a->target=i; a->breed_target=j; } }
+    if (energy>=threshold && x.hunger==0 && chance(seed,tick,i,24,probability)) { j=choose(c,g,i,EMPTY,seed,tick,25); if (j>=0) { a->kind=ACT_BREED; a->target=i; a->breed_target=j; } }
 }
 static int priority(const Cell *g, const Action *a, int target) { return a->kind==ACT_EAT && g[target].species!=EMPTY ? 0 : (a->kind==ACT_MOVE || a->kind==ACT_EAT || a->kind==ACT_BREED ? 1 : 2); }
 static void apply_actions(const Config *c, const Cell *g, Cell *next, const Action *actions) {
     int total=c->rows*c->cols, *winner=malloc((size_t)total*sizeof(*winner));
     for (int i=0;i<total;++i) { next[i]=(Cell){EMPTY,0,0,0}; winner[i]=-1; }
     for (int i=0;i<total;++i) for (int k=0;k<2;++k) { int t=k ? actions[i].breed_target : actions[i].target; if (t<0) continue; int p=priority(g,&actions[i],t); if (winner[t]<0 || p<priority(g,&actions[winner[t]],t) || (p==priority(g,&actions[winner[t]],t) && i<winner[t])) winner[t]=i; }
-    for (int i=0;i<total;++i) { const Cell *s=&g[i]; const Action *a=&actions[i]; if (s->species==EMPTY || a->kind==ACT_DIE || winner[a->target]!=i) continue; Cell r=*s; r.age++; if (s->species!=PLANT) { r.energy--; r.hunger++; } if (a->kind==ACT_EAT) { r.energy+=s->species==HERBIVORE?1:2; r.hunger=0; } next[a->target]=r; if (a->kind==ACT_BREED && a->breed_target>=0 && winner[a->breed_target]==i) next[a->breed_target]=(Cell){s->species,s->species==PLANT?1:3,0,0}; }
+    for (int i=0;i<total;++i) { const Cell *s=&g[i]; const Action *a=&actions[i]; if (s->species==EMPTY || a->kind==ACT_DIE || winner[a->target]!=i) continue; Cell r=*s; r.age++; if (s->species != PLANT) {
+      r.hunger++;
+      if (a->kind != ACT_EAT) r.energy--;
+  } if (a->kind==ACT_EAT) { r.energy+=s->species==HERBIVORE?1:2; r.hunger=0; } next[a->target]=r; if (a->kind==ACT_BREED && a->breed_target>=0 && winner[a->breed_target]==i) next[a->breed_target]=(Cell){s->species,s->species==PLANT?1:3,0,0}; }
     free(winner);
 }
 static void print_state(const Config *c, const Cell *g, int tick, FILE *out) {
@@ -73,5 +76,9 @@ int main(int argc,char **argv) {
         for(int i=0;i<total;++i)decide(&c,g,&actions[i],i,tick,c.seed);
         apply_actions(&c,g,next,actions); Cell *tmp=g;g=next;next=tmp; print_state(&c,g,tick,out);
     }
-    if(output)fclose(out);free(g);free(next);free(actions);return 0;
+    if (output) fclose(out);
+    free(g);
+    free(next);
+    free(actions);
+    return 0;
 }
