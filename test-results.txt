@@ -1,0 +1,42 @@
+Configuración: 4x6, ticks=3, threads=1, seed=7
+
+Tick 0
+Plantas: 5
+Herbívoros: 3
+Carnívoros: 2
+Distribución:
+P . . . . C
+. . P . H P
+C . . . . .
+. P . P H H
+
+Tick 1
+Plantas: 4
+Herbívoros: 2
+Carnívoros: 2
+Distribución:
+P P . . C .
+C . P . . H
+. . . . . .
+. P . H . .
+
+Tick 2
+Plantas: 4
+Herbívoros: 2
+Carnívoros: 2
+Distribución:
+P P . C . .
+. . P . H .
+C . . H . .
+. P . . . .
+
+Tick 3
+Plantas: 4
+Herbívoros: 1
+Carnívoros: 2
+Distribución:
+P P . . . .
+. . P C . .
+. C . . . .
+. P . H . .
+
