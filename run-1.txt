@@ -1,0 +1,86 @@
+Configuración: 8x8, ticks=5, threads=1, seed=99
+
+Tick 0
+Plantas: 12
+Herbívoros: 6
+Carnívoros: 3
+Distribución:
+. . . . P P H .
+C . . . . . . .
+. . H P H P . C
+. . . P P . . .
+. . . . . P . .
+H P P . . . . .
+P . . . . . . H
+P P . H . . C .
+
+Tick 1
+Plantas: 10
+Herbívoros: 5
+Carnívoros: 3
+Distribución:
+. . . . P H . .
+. C . . . . . .
+. . . H . H . .
+. . . P P . . C
+. . P . . P . .
+. H P . . . . .
+P . . . . . H .
+P P P . . . . C
+
+Tick 2
+Plantas: 9
+Herbívoros: 5
+Carnívoros: 2
+Distribución:
+. . . . H . . .
+. . . . . . . .
+. C . . . . . C
+. . . H P H . .
+. . P . . P . .
+P . H . . . . .
+P . P . . . . .
+P P P . . . H .
+
+Tick 3
+Plantas: 9
+Herbívoros: 3
+Carnívoros: 2
+Distribución:
+. . . . . . . .
+. . . . H . . C
+C . . . . . . .
+. . . . H . . .
+. P P . . P . .
+P . . . . . . .
+P . H . . . . .
+P P P P . . . .
+
+Tick 4
+Plantas: 9
+Herbívoros: 3
+Carnívoros: 0
+Distribución:
+. . . . . . . .
+. . . . . . . .
+. . . . H . . .
+. . . H . . . .
+. P P . P P . .
+P . . . . . . .
+P . . . . . . .
+P P H P . . . .
+
+Tick 5
+Plantas: 10
+Herbívoros: 2
+Carnívoros: 0
+Distribución:
+. . . . . . . .
+. . . . . . . .
+. . . . . . . .
+. . . . H . . .
+. P P P P P . .
+P . . . . . . .
+P P . . . . . .
+P P . H . . . .
+
