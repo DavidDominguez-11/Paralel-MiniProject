@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <omp.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,15 +128,25 @@ static bool memory_fits(const CliConfig *config) {
 
 static bool run_simulation(Ecosystem *ecosystem, const CliConfig *config,
                            FILE *output) {
-  if (fprintf(output, "Configuración: %dx%d, ticks=%d, seed=%" PRIu64 "\n\n",
+  double process_start;
+  double process_elapsed;
+
+  if (fprintf(output, "Configuración: %dx%d, ticks=%d, threads=%d, seed=%" PRIu64
+                      "\n\n",
               config->ecosystem.rows, config->ecosystem.cols, config->ticks,
-              config->ecosystem.seed) < 0 ||
+              config->ecosystem.threads, config->ecosystem.seed) < 0 ||
       !ecosystem_print(ecosystem, 0, output)) {
     return false;
   }
+  process_start = omp_get_wtime();
   for (int tick = 1; tick <= config->ticks;) {
-    if (!ecosystem_tick(ecosystem, tick) ||
-        !ecosystem_print(ecosystem, tick, output)) {
+    double tick_start = omp_get_wtime();
+    bool tick_ok = ecosystem_tick(ecosystem, tick);
+    double tick_elapsed = omp_get_wtime() - tick_start;
+
+    if (!tick_ok || !ecosystem_print(ecosystem, tick, output) ||
+        fprintf(output, "Tiempo del tick %d: %.6f segundos\n\n", tick,
+                tick_elapsed) < 0) {
       return false;
     }
     /* El último tick termina antes del incremento, incluso cuando vale INT_MAX.
@@ -145,13 +156,37 @@ static bool run_simulation(Ecosystem *ecosystem, const CliConfig *config,
     }
     ++tick;
   }
-  return true;
+  process_elapsed = omp_get_wtime() - process_start;
+  return ecosystem_print_thread_times(ecosystem, output) &&
+         fprintf(output, "Tiempo total del proceso: %.6f segundos\n",
+                 process_elapsed) >= 0;
+}
+
+/* Vuelca el búfer de salida al destino indicado; reporta el error con perror
+ * usando `label` cuando la escritura o el cierre fallan. */
+static bool dump_buffer(const char *path, const char *label, const char *data,
+                        size_t size) {
+  FILE *destination = fopen(path, "w");
+  if (destination == NULL) {
+    perror(label);
+    return false;
+  }
+  bool ok = fwrite(data, 1, size, destination) == size;
+  if (fclose(destination) != 0) {
+    ok = false;
+  }
+  if (!ok) {
+    perror(label);
+  }
+  return ok;
 }
 
 int main(int argc, char **argv) {
   CliConfig config = {{20, 40, 1, UINT64_C(20240820)}, {150, 40, 15}, 20, NULL};
   Ecosystem *ecosystem;
-  FILE *output = stdout;
+  char *buffer = NULL;
+  size_t buffer_size = 0;
+  FILE *output;
   bool success;
 
   if (!parse_cli(argc, argv, &config) || !population_fits(&config)) {
@@ -172,28 +207,32 @@ int main(int argc, char **argv) {
     ecosystem_destroy(ecosystem);
     return 1;
   }
-  if (config.output_path != NULL) {
-    output = fopen(config.output_path, "w");
-    if (output == NULL) {
-      perror(config.output_path);
-      ecosystem_destroy(ecosystem);
-      return 1;
-    }
-  }
 
-  success = run_simulation(ecosystem, &config, output);
-  /* Cerrar o vaciar también forma parte del resultado observable de E/S. */
-  if (config.output_path != NULL && fclose(output) != 0) {
-    perror(config.output_path);
-    success = false;
-  } else if (config.output_path == NULL && fflush(output) != 0) {
-    perror("stdout");
-    success = false;
-  }
-  ecosystem_destroy(ecosystem);
-  if (!success) {
-    fprintf(stderr, "Falló la escritura de la simulación.\n");
+  output = open_memstream(&buffer, &buffer_size);
+  if (output == NULL) {
+    fprintf(stderr, "No se pudo preparar el búfer de salida.\n");
+    ecosystem_destroy(ecosystem);
     return 1;
   }
-  return 0;
+  success = run_simulation(ecosystem, &config, output);
+  ecosystem_destroy(ecosystem);
+  if (fclose(output) != 0) {
+    success = false;
+  }
+  if (!success) {
+    fprintf(stderr, "Falló la escritura de la simulación.\n");
+    free(buffer);
+    return 1;
+  }
+
+  /* La salida siempre se muestra en consola y se guarda en run.txt; si se
+   * pidió --output, también se escribe en el archivo solicitado. */
+  fwrite(buffer, 1, buffer_size, stdout);
+  success = dump_buffer("run.txt", "run.txt", buffer, buffer_size);
+  if (success && config.output_path != NULL) {
+    success = dump_buffer(config.output_path, config.output_path, buffer,
+                          buffer_size);
+  }
+  free(buffer);
+  return success ? 0 : 1;
 }

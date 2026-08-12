@@ -37,6 +37,7 @@ struct Ecosystem {
   int *final_destination;
   unsigned char *consumed;
   unsigned char *alive;
+  double *thread_seconds;
 };
 
 static const int ROW_OFFSET[8] = {-1, -1, -1, 0, 0, 1, 1, 1};
@@ -173,7 +174,8 @@ bool ecosystem_required_bytes(EcosystemConfig config,
       cells > (UINT64_MAX - (uint64_t)sizeof(Ecosystem)) / bytes_per_cell) {
     return false;
   }
-  *required_bytes = (uint64_t)sizeof(Ecosystem) + cells * bytes_per_cell;
+  *required_bytes = (uint64_t)sizeof(Ecosystem) + cells * bytes_per_cell +
+                    (uint64_t)(unsigned int)config.threads * (uint64_t)sizeof(double);
   return true;
 }
 
@@ -448,10 +450,12 @@ Ecosystem *ecosystem_create(EcosystemConfig config) {
       malloc(ecosystem->total * sizeof(*ecosystem->final_destination));
   ecosystem->consumed = calloc(ecosystem->total, sizeof(*ecosystem->consumed));
   ecosystem->alive = calloc(ecosystem->total, sizeof(*ecosystem->alive));
+  ecosystem->thread_seconds =
+      calloc((size_t)config.threads, sizeof(*ecosystem->thread_seconds));
   if (ecosystem->current == NULL || ecosystem->next == NULL ||
       ecosystem->intents == NULL || ecosystem->resource_winner == NULL ||
       ecosystem->final_destination == NULL || ecosystem->consumed == NULL ||
-      ecosystem->alive == NULL) {
+      ecosystem->alive == NULL || ecosystem->thread_seconds == NULL) {
     ecosystem_destroy(ecosystem);
     return NULL;
   }
@@ -469,6 +473,7 @@ void ecosystem_destroy(Ecosystem *ecosystem) {
   free(ecosystem->final_destination);
   free(ecosystem->consumed);
   free(ecosystem->alive);
+  free(ecosystem->thread_seconds);
   free(ecosystem);
 }
 
@@ -514,13 +519,22 @@ bool ecosystem_tick(Ecosystem *ecosystem, int tick) {
   omp_set_dynamic(0);
   omp_set_num_threads(ecosystem->config.threads);
   /* Fase D: cada iteración escribe Intent[i] y solo lee CurrentGrid inmutable.
-   * La barrera implícita entrega todas las intenciones antes de resolverlas. */
-#pragma omp parallel for schedule(static)
-  for (int row = 0; row < ecosystem->config.rows; ++row) {
-    size_t row_start = (size_t)row * (size_t)ecosystem->config.cols;
-    for (int col = 0; col < ecosystem->config.cols; ++col) {
-      generate_intent(ecosystem, row_start + (size_t)col, tick);
+   * La barrera implícita entrega todas las intenciones antes de resolverlas.
+   * Cada hilo acumula su propio tiempo en thread_seconds para poder reportar
+   * el reparto de carga entre hilos al final de la simulación. */
+#pragma omp parallel
+  {
+    int thread_id = omp_get_thread_num();
+    double thread_start = omp_get_wtime();
+
+#pragma omp for schedule(static)
+    for (int row = 0; row < ecosystem->config.rows; ++row) {
+      size_t row_start = (size_t)row * (size_t)ecosystem->config.cols;
+      for (int col = 0; col < ecosystem->config.cols; ++col) {
+        generate_intent(ecosystem, row_start + (size_t)col, tick);
+      }
     }
+    ecosystem->thread_seconds[thread_id] += omp_get_wtime() - thread_start;
   }
 
   /* R/V/C son seriales deliberadamente: expresan un orden total reproducible.
@@ -609,4 +623,20 @@ bool ecosystem_print(const Ecosystem *ecosystem, int tick, FILE *output) {
     }
   }
   return fputc('\n', output) != EOF;
+}
+
+bool ecosystem_print_thread_times(const Ecosystem *ecosystem, FILE *output) {
+  if (ecosystem == NULL || output == NULL) {
+    return false;
+  }
+  if (fprintf(output, "Tiempo por hilo (fase D, acumulado):\n") < 0) {
+    return false;
+  }
+  for (int thread = 0; thread < ecosystem->config.threads; ++thread) {
+    if (fprintf(output, "  Hilo %d: %.6f segundos\n", thread,
+                ecosystem->thread_seconds[thread]) < 0) {
+      return false;
+    }
+  }
+  return true;
 }

@@ -118,4 +118,13 @@ Population ecosystem_count(const Ecosystem *ecosystem);
  */
 bool ecosystem_print(const Ecosystem *ecosystem, int tick, FILE *output);
 
+/**
+ * Escribe el tiempo acumulado que cada hilo pasó ejecutando la fase paralela
+ * (D) a lo largo de todos los ticks corridos hasta el momento.
+ *
+ * `ecosystem` y `output` deben ser válidos. Devuelve `false` por argumentos
+ * inválidos o cualquier error de E/S.
+ */
+bool ecosystem_print_thread_times(const Ecosystem *ecosystem, FILE *output);
+
 #endif
