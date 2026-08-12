@@ -10,13 +10,13 @@ enum {
   /* Reglas biológicas compiladas; no son parámetros de ejecución. */
   PLANT_REPRODUCTION_PERCENT = 30,
   HERBIVORE_REPRODUCTION_PERCENT = 20,
-  CARNIVORE_REPRODUCTION_PERCENT = 15,
+  CARNIVORE_REPRODUCTION_PERCENT = 25,
   HERBIVORE_REPRODUCTION_ENERGY = 8,
-  CARNIVORE_REPRODUCTION_ENERGY = 12,
+  CARNIVORE_REPRODUCTION_ENERGY = 10,
   HERBIVORE_MAX_AGE = 50,
   CARNIVORE_MAX_AGE = 60,
   HERBIVORE_STARVATION_TICKS = 3,
-  CARNIVORE_STARVATION_TICKS = 4
+  CARNIVORE_STARVATION_TICKS = 6
 };
 
 typedef enum { INTENT_STAY, INTENT_MOVE, INTENT_EAT, INTENT_DIE } IntentKind;
@@ -100,6 +100,44 @@ static int choose_neighbor(const Ecosystem *ecosystem, size_t index,
                     (uint64_t)(unsigned int)count];
 }
 
+static int choose_carnivore_step(const Ecosystem *ecosystem, size_t index,
+                                 int tick, uint64_t salt) {
+  int candidates[8];
+  int count = 0;
+  int best_score = -1;
+
+  for (int direction = 0; direction < 8; ++direction) {
+    int candidate = neighbor_index(ecosystem, index, direction);
+    if (candidate < 0 || ecosystem->current[candidate].species != SPECIES_EMPTY) {
+      continue;
+    }
+
+    int score = 0;
+    for (int look = 0; look < 8; ++look) {
+      int neighbor = neighbor_index(ecosystem, (size_t)candidate, look);
+      if (neighbor >= 0 &&
+          ecosystem->current[neighbor].species == SPECIES_HERBIVORE) {
+        ++score;
+      }
+    }
+
+    if (score > best_score) {
+      best_score = score;
+      count = 0;
+    }
+    if (score == best_score) {
+      candidates[count] = candidate;
+      ++count;
+    }
+  }
+
+  if (count == 0) {
+    return -1;
+  }
+  return candidates[random_value(ecosystem->config.seed, tick, index, salt) %
+                    (uint64_t)(unsigned int)count];
+}
+
 static Cell initial_cell(Species species) {
   int energy = 0;
   if (species == SPECIES_PLANT) {
@@ -107,7 +145,7 @@ static Cell initial_cell(Species species) {
   } else if (species == SPECIES_HERBIVORE) {
     energy = 5;
   } else if (species == SPECIES_CARNIVORE) {
-    energy = 7;
+    energy = 9;
   }
   return (Cell){species, energy, 0, 0};
 }
@@ -171,7 +209,10 @@ static void decide_animal(const Ecosystem *ecosystem, size_t index, int tick,
     intent->kind = INTENT_EAT;
     intent->destination = food_destination;
   } else {
-    movement_destination = choose_neighbor(ecosystem, index, SPECIES_EMPTY, -1,
+    movement_destination = cell.species == SPECIES_CARNIVORE
+                               ? choose_carnivore_step(ecosystem, index, tick,
+                                                       UINT64_C(21))
+                               : choose_neighbor(ecosystem, index, SPECIES_EMPTY, -1,
                                            tick, UINT64_C(21));
     if (movement_destination >= 0) {
       intent->kind = INTENT_MOVE;

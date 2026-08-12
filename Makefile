@@ -25,7 +25,7 @@ main.o ecosystem.o tests/test_ecosystem.o: ecosystem.h
 
 test: $(TARGET) $(TEST_TARGET)
 	./$(TEST_TARGET)
-	sh ./tests/test_determinism.sh ./$(TARGET)
+	./tests/test_determinism.sh ./$(TARGET)
 
 # clang-format es opcional y nunca forma parte de la construcción ordinaria.
 format:
