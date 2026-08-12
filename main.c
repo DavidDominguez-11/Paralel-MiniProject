@@ -1,4 +1,3 @@
-#include <omp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -8,7 +7,7 @@ typedef enum { EMPTY, PLANT, HERBIVORE, CARNIVORE } Species;
 typedef struct { Species species; int energy, age, hunger; } Cell;
 typedef enum { ACT_STAY, ACT_MOVE, ACT_EAT, ACT_BREED, ACT_DIE } ActionKind;
 typedef struct { ActionKind kind; int target; int breed_target; } Action;
-typedef struct { int rows, cols, ticks, threads, plants, herbivores, carnivores; uint64_t seed; } Config;
+typedef struct { int rows, cols, ticks, plants, herbivores, carnivores; uint64_t seed; } Config;
 static const int DR[4] = {-1, 0, 1, 0}, DC[4] = {0, 1, 0, -1};
 
 static uint64_t mix64(uint64_t x) {
@@ -62,17 +61,16 @@ static void print_state(const Config *c, const Cell *g, int tick, FILE *out) {
     fprintf(out,"Tick %d\nPlantas: %d\nHerbívoros: %d\nCarnívoros: %d\nDistribución:\n",tick,p,h,ca);
     for (int r=0;r<c->rows;++r) { for (int col=0;col<c->cols;++col) { Species s=g[r*c->cols+col].species; fputc(s==PLANT?'P':s==HERBIVORE?'H':s==CARNIVORE?'C':'.',out); if(col+1<c->cols) fputc(' ',out); } fputc('\n',out); } fputc('\n',out);
 }
-static void usage(const char *n) { fprintf(stderr,"Uso: %s [--rows N] [--cols N] [--ticks N] [--plants N] [--herbivores N] [--carnivores N] [--threads N] [--seed N] [--output ARCHIVO]\n",n); }
+static void usage(const char *n) { fprintf(stderr,"Uso: %s [--rows N] [--cols N] [--ticks N] [--plants N] [--herbivores N] [--carnivores N] [--seed N] [--output ARCHIVO]\n",n); }
 int main(int argc,char **argv) {
-    Config c={20,40,20,1,150,40,15,UINT64_C(20240820)}; const char *output=NULL;
-    for(int i=1;i<argc;i+=2) { if(i+1>=argc){usage(argv[0]);return 2;} long v=strtol(argv[i+1],NULL,10); if(!strcmp(argv[i],"--rows"))c.rows=v;else if(!strcmp(argv[i],"--cols"))c.cols=v;else if(!strcmp(argv[i],"--ticks"))c.ticks=v;else if(!strcmp(argv[i],"--plants"))c.plants=v;else if(!strcmp(argv[i],"--herbivores"))c.herbivores=v;else if(!strcmp(argv[i],"--carnivores"))c.carnivores=v;else if(!strcmp(argv[i],"--threads"))c.threads=v;else if(!strcmp(argv[i],"--seed"))c.seed=(uint64_t)v;else if(!strcmp(argv[i],"--output"))output=argv[i+1];else{usage(argv[0]);return 2;} }
-    int total=c.rows*c.cols; if(c.rows<=0||c.cols<=0||c.ticks<0||c.threads<=0||c.plants<0||c.herbivores<0||c.carnivores<0||c.plants+c.herbivores+c.carnivores>total){fprintf(stderr,"Configuración inválida.\n");return 2;}
+    Config c={20,40,20,150,40,15,UINT64_C(20240820)}; const char *output=NULL;
+    for(int i=1;i<argc;i+=2) { if(i+1>=argc){usage(argv[0]);return 2;} long v=strtol(argv[i+1],NULL,10); if(!strcmp(argv[i],"--rows"))c.rows=v;else if(!strcmp(argv[i],"--cols"))c.cols=v;else if(!strcmp(argv[i],"--ticks"))c.ticks=v;else if(!strcmp(argv[i],"--plants"))c.plants=v;else if(!strcmp(argv[i],"--herbivores"))c.herbivores=v;else if(!strcmp(argv[i],"--carnivores"))c.carnivores=v;else if(!strcmp(argv[i],"--seed"))c.seed=(uint64_t)v;else if(!strcmp(argv[i],"--output"))output=argv[i+1];else{usage(argv[0]);return 2;} }
+    int total=c.rows*c.cols; if(c.rows<=0||c.cols<=0||c.ticks<0||c.plants<0||c.herbivores<0||c.carnivores<0||c.plants+c.herbivores+c.carnivores>total){fprintf(stderr,"Configuración inválida.\n");return 2;}
     Cell *g=calloc((size_t)total,sizeof(*g)),*next=calloc((size_t)total,sizeof(*next)); Action *actions=calloc((size_t)total,sizeof(*actions)); if(!g||!next||!actions)return 1;
     int counts[3]={c.plants,c.herbivores,c.carnivores},placed=0; for(int s=0;s<3;++s)for(int n=0;n<counts[s];++n){int pos=rv(c.seed,-1,placed+n,s)%total;while(g[pos].species!=EMPTY)pos=(pos+1)%total;Species sp=s+1;g[pos]=(Cell){sp,sp==PLANT?1:sp==HERBIVORE?5:7,0,0};placed++;}
-    omp_set_num_threads(c.threads); FILE *out=output?fopen(output,"w"):stdout; if(!out){perror(output);return 1;}
-    fprintf(out,"Configuración: %dx%d, ticks=%d, threads=%d, seed=%llu\n\n",c.rows,c.cols,c.ticks,c.threads,(unsigned long long)c.seed); print_state(&c,g,0,out);
+    FILE *out=output?fopen(output,"w"):stdout; if(!out){perror(output);return 1;}
+    fprintf(out,"Configuración: %dx%d, ticks=%d, seed=%llu\n\n",c.rows,c.cols,c.ticks,(unsigned long long)c.seed); print_state(&c,g,0,out);
     for(int tick=1;tick<=c.ticks;++tick){
-        #pragma omp parallel for schedule(static)
         for(int i=0;i<total;++i)decide(&c,g,&actions[i],i,tick,c.seed);
         apply_actions(&c,g,next,actions); Cell *tmp=g;g=next;next=tmp; print_state(&c,g,tick,out);
     }
