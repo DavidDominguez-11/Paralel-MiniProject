@@ -1,4 +1,4 @@
-Configuración: 8x8, ticks=5, threads=4, seed=99
+Configuración: 8x8, ticks=5, threads=1, seed=99
 
 Tick 0
 Plantas: 12
@@ -83,4 +83,3 @@ Distribución:
 P . . . . . . .
 P P . . . . . .
 P P . H . . . .
-
