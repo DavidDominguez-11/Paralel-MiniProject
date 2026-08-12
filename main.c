@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 typedef enum { EMPTY, PLANT, HERBIVORE, CARNIVORE } Species;
 typedef struct { Species species; int energy, age, hunger; } Cell;
@@ -68,13 +69,21 @@ int main(int argc,char **argv) {
     int total=c.rows*c.cols; if(c.rows<=0||c.cols<=0||c.ticks<0||c.plants<0||c.herbivores<0||c.carnivores<0||c.plants+c.herbivores+c.carnivores>total){fprintf(stderr,"Configuración inválida.\n");return 2;}
     Cell *g=calloc((size_t)total,sizeof(*g)),*next=calloc((size_t)total,sizeof(*next)); Action *actions=calloc((size_t)total,sizeof(*actions)); if(!g||!next||!actions)return 1;
     int counts[3]={c.plants,c.herbivores,c.carnivores},placed=0; for(int s=0;s<3;++s)for(int n=0;n<counts[s];++n){int pos=rv(c.seed,-1,placed+n,s)%total;while(g[pos].species!=EMPTY)pos=(pos+1)%total;Species sp=s+1;g[pos]=(Cell){sp,sp==PLANT?1:sp==HERBIVORE?5:7,0,0};placed++;}
-    FILE *out=output?fopen(output,"w"):stdout; if(!out){perror(output);return 1;}
+    char *buf=NULL; size_t bufsize=0; FILE *out=open_memstream(&buf,&bufsize); if(!out)return 1;
     fprintf(out,"Configuración: %dx%d, ticks=%d, seed=%llu\n\n",c.rows,c.cols,c.ticks,(unsigned long long)c.seed); print_state(&c,g,0,out);
+    struct timespec t0,t1; clock_gettime(CLOCK_MONOTONIC,&t0);
     for(int tick=1;tick<=c.ticks;++tick){
         for(int i=0;i<total;++i)decide(&c,g,&actions[i],i,tick,c.seed);
         apply_actions(&c,g,next,actions); Cell *tmp=g;g=next;next=tmp; print_state(&c,g,tick,out);
     }
-    if (output) fclose(out);
+    clock_gettime(CLOCK_MONOTONIC,&t1);
+    double elapsed=(t1.tv_sec-t0.tv_sec)+(t1.tv_nsec-t0.tv_nsec)/1e9;
+    fprintf(out,"Tiempo de ejecución: %.6f segundos\n",elapsed);
+    fclose(out);
+    fwrite(buf,1,bufsize,stdout);
+    FILE *runlog=fopen("run.txt","w"); if(!runlog){perror("run.txt");free(buf);return 1;} fwrite(buf,1,bufsize,runlog); fclose(runlog);
+    if(output){ FILE *outfile=fopen(output,"w"); if(!outfile){perror(output);free(buf);return 1;} fwrite(buf,1,bufsize,outfile); fclose(outfile); }
+    free(buf);
     free(g);
     free(next);
     free(actions);
