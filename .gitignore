@@ -1,6 +1,9 @@
 # Prerequisites
 *.d
 
+test_determinism.sh
+Makefile
+
 # Object files
 *.o
 *.ko
