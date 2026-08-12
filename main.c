@@ -1,84 +1,199 @@
-#include <omp.h>
+#include "ecosystem.h"
+
+#include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 
-typedef enum { EMPTY, PLANT, HERBIVORE, CARNIVORE } Species;
-typedef struct { Species species; int energy, age, hunger; } Cell;
-typedef enum { ACT_STAY, ACT_MOVE, ACT_EAT, ACT_BREED, ACT_DIE } ActionKind;
-typedef struct { ActionKind kind; int target; int breed_target; } Action;
-typedef struct { int rows, cols, ticks, threads, plants, herbivores, carnivores; uint64_t seed; } Config;
-static const int DR[4] = {-1, 0, 1, 0}, DC[4] = {0, 1, 0, -1};
+typedef struct {
+  EcosystemConfig ecosystem;
+  Population population;
+  int ticks;
+  const char *output_path;
+} CliConfig;
 
-static uint64_t mix64(uint64_t x) {
-    x += UINT64_C(0x9e3779b97f4a7c15);
-    x = (x ^ (x >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    x = (x ^ (x >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return x ^ (x >> 31);
+static void print_usage(const char *program) {
+  fprintf(stderr,
+          "Uso: %s [--rows N] [--cols N] [--ticks N] [--plants N]\n"
+          "          [--herbivores N] [--carnivores N] [--threads N]\n"
+          "          [--seed N] [--output ARCHIVO]\n",
+          program);
 }
-static uint64_t rv(uint64_t seed, int tick, int index, int salt) {
-    return mix64(seed ^ (uint64_t)(tick + 1) * UINT64_C(0x632be59bd9b4e019) ^
-                 (uint64_t)(index + 1) * UINT64_C(0x8cb92baa3f3a5b1d) ^ (uint64_t)(salt + 1));
+
+static bool parse_int(const char *text, int minimum, int *result) {
+  char *end = NULL;
+  long value;
+
+  errno = 0;
+  value = strtol(text, &end, 10);
+  if (errno == ERANGE || end == text || *end != '\0' || value < minimum ||
+      value > INT_MAX) {
+    return false;
+  }
+  *result = (int)value;
+  return true;
 }
-static int chance(uint64_t seed, int tick, int index, int salt, int percent) { return rv(seed,tick,index,salt)%100 < (uint64_t)percent; }
-static int neigh(const Config *c, int index, int d) {
-    int r=index/c->cols, col=index%c->cols, nr=r+DR[d], nc=col+DC[d];
-    return nr<0 || nr>=c->rows || nc<0 || nc>=c->cols ? -1 : nr*c->cols+nc;
+
+static bool parse_seed(const char *text, uint64_t *result) {
+  char *end = NULL;
+  uintmax_t value;
+
+  if (text[0] == '-' || text[0] == '\0') {
+    return false;
+  }
+  errno = 0;
+  value = strtoumax(text, &end, 10);
+  if (errno == ERANGE || *end != '\0' || value > UINT64_MAX) {
+    return false;
+  }
+  *result = (uint64_t)value;
+  return true;
 }
-static int choose(const Config *c, const Cell *g, int index, Species wanted, uint64_t seed, int tick, int salt) {
-    int a[4], n=0;
-    for (int d=0; d<4; ++d) { int j=neigh(c,index,d); if (j>=0 && (wanted==EMPTY ? g[j].species==EMPTY : g[j].species==wanted)) a[n++]=j; }
-    return n ? a[rv(seed,tick,index,salt)%n] : -1;
+
+static bool assign_option(CliConfig *config, const char *option,
+                          const char *value) {
+  if (strcmp(option, "--rows") == 0) {
+    return parse_int(value, 1, &config->ecosystem.rows);
+  }
+  if (strcmp(option, "--cols") == 0) {
+    return parse_int(value, 1, &config->ecosystem.cols);
+  }
+  if (strcmp(option, "--ticks") == 0) {
+    return parse_int(value, 0, &config->ticks);
+  }
+  if (strcmp(option, "--plants") == 0) {
+    return parse_int(value, 0, &config->population.plants);
+  }
+  if (strcmp(option, "--herbivores") == 0) {
+    return parse_int(value, 0, &config->population.herbivores);
+  }
+  if (strcmp(option, "--carnivores") == 0) {
+    return parse_int(value, 0, &config->population.carnivores);
+  }
+  if (strcmp(option, "--threads") == 0) {
+    return parse_int(value, 1, &config->ecosystem.threads);
+  }
+  if (strcmp(option, "--seed") == 0) {
+    return parse_seed(value, &config->ecosystem.seed);
+  }
+  if (strcmp(option, "--output") == 0 && value[0] != '\0') {
+    config->output_path = value;
+    return true;
+  }
+  return false;
 }
-static void decide(const Config *c, const Cell *g, Action *a, int i, int tick, uint64_t seed) {
-    Cell x=g[i]; a->kind=ACT_DIE; a->target=-1; a->breed_target=-1; if (x.species==EMPTY) return;
-    int age=x.age+1, hunger=x.hunger+1, energy=x.energy-1;
-    int maxage=x.species==PLANT ? 1000000 : x.species==HERBIVORE ? 50 : 60;
-    int maxhunger=x.species==PLANT ? 1000000 : x.species==HERBIVORE ? 3 : 4;
-    if (age>=maxage || hunger>=maxhunger || (x.species!=PLANT && energy<=0)) return;
-    a->kind=ACT_STAY; a->target=i;
-    if (x.species==PLANT) { int j=choose(c,g,i,EMPTY,seed,tick,10); if (j>=0 && chance(seed,tick,i,11,30)) { a->kind=ACT_BREED; a->breed_target=j; } return; }
-    Species food=x.species==HERBIVORE ? PLANT : HERBIVORE; int j=choose(c,g,i,food,seed,tick,20);
-    if (j>=0) { a->kind=ACT_EAT; a->target=j; return; }
-    if (x.species==HERBIVORE && choose(c,g,i,CARNIVORE,seed,tick,21)>=0) { j=choose(c,g,i,EMPTY,seed,tick,22); if (j>=0) { a->kind=ACT_MOVE; a->target=j; } return; }
-    j=choose(c,g,i,EMPTY,seed,tick,23); if (j>=0) { a->kind=ACT_MOVE; a->target=j; }
-    int threshold=x.species==HERBIVORE ? 8 : 12, probability=x.species==HERBIVORE ? 20 : 15;
-    if (energy>=threshold && x.hunger==0 && chance(seed,tick,i,24,probability)) { j=choose(c,g,i,EMPTY,seed,tick,25); if (j>=0) { a->kind=ACT_BREED; a->target=i; a->breed_target=j; } }
-}
-static int priority(const Cell *g, const Action *a, int target) { return a->kind==ACT_EAT && g[target].species!=EMPTY ? 0 : (a->kind==ACT_MOVE || a->kind==ACT_EAT || a->kind==ACT_BREED ? 1 : 2); }
-static void apply_actions(const Config *c, const Cell *g, Cell *next, const Action *actions) {
-    int total=c->rows*c->cols, *winner=malloc((size_t)total*sizeof(*winner));
-    for (int i=0;i<total;++i) { next[i]=(Cell){EMPTY,0,0,0}; winner[i]=-1; }
-    for (int i=0;i<total;++i) for (int k=0;k<2;++k) { int t=k ? actions[i].breed_target : actions[i].target; if (t<0) continue; int p=priority(g,&actions[i],t); if (winner[t]<0 || p<priority(g,&actions[winner[t]],t) || (p==priority(g,&actions[winner[t]],t) && i<winner[t])) winner[t]=i; }
-    for (int i=0;i<total;++i) { const Cell *s=&g[i]; const Action *a=&actions[i]; if (s->species==EMPTY || a->kind==ACT_DIE || winner[a->target]!=i) continue; Cell r=*s; r.age++; if (s->species != PLANT) {
-      r.hunger++;
-      if (a->kind != ACT_EAT) r.energy--;
-  } if (a->kind==ACT_EAT) { r.energy+=s->species==HERBIVORE?1:2; r.hunger=0; } next[a->target]=r; if (a->kind==ACT_BREED && a->breed_target>=0 && winner[a->breed_target]==i) next[a->breed_target]=(Cell){s->species,s->species==PLANT?1:3,0,0}; }
-    free(winner);
-}
-static void print_state(const Config *c, const Cell *g, int tick, FILE *out) {
-    int p=0,h=0,ca=0,total=c->rows*c->cols; for (int i=0;i<total;++i) { p+=g[i].species==PLANT; h+=g[i].species==HERBIVORE; ca+=g[i].species==CARNIVORE; }
-    fprintf(out,"Tick %d\nPlantas: %d\nHerbívoros: %d\nCarnívoros: %d\nDistribución:\n",tick,p,h,ca);
-    for (int r=0;r<c->rows;++r) { for (int col=0;col<c->cols;++col) { Species s=g[r*c->cols+col].species; fputc(s==PLANT?'P':s==HERBIVORE?'H':s==CARNIVORE?'C':'.',out); if(col+1<c->cols) fputc(' ',out); } fputc('\n',out); } fputc('\n',out);
-}
-static void usage(const char *n) { fprintf(stderr,"Uso: %s [--rows N] [--cols N] [--ticks N] [--plants N] [--herbivores N] [--carnivores N] [--threads N] [--seed N] [--output ARCHIVO]\n",n); }
-int main(int argc,char **argv) {
-    Config c={20,40,20,1,150,40,15,UINT64_C(20240820)}; const char *output=NULL;
-    for(int i=1;i<argc;i+=2) { if(i+1>=argc){usage(argv[0]);return 2;} long v=strtol(argv[i+1],NULL,10); if(!strcmp(argv[i],"--rows"))c.rows=v;else if(!strcmp(argv[i],"--cols"))c.cols=v;else if(!strcmp(argv[i],"--ticks"))c.ticks=v;else if(!strcmp(argv[i],"--plants"))c.plants=v;else if(!strcmp(argv[i],"--herbivores"))c.herbivores=v;else if(!strcmp(argv[i],"--carnivores"))c.carnivores=v;else if(!strcmp(argv[i],"--threads"))c.threads=v;else if(!strcmp(argv[i],"--seed"))c.seed=(uint64_t)v;else if(!strcmp(argv[i],"--output"))output=argv[i+1];else{usage(argv[0]);return 2;} }
-    int total=c.rows*c.cols; if(c.rows<=0||c.cols<=0||c.ticks<0||c.threads<=0||c.plants<0||c.herbivores<0||c.carnivores<0||c.plants+c.herbivores+c.carnivores>total){fprintf(stderr,"Configuración inválida.\n");return 2;}
-    Cell *g=calloc((size_t)total,sizeof(*g)),*next=calloc((size_t)total,sizeof(*next)); Action *actions=calloc((size_t)total,sizeof(*actions)); if(!g||!next||!actions)return 1;
-    int counts[3]={c.plants,c.herbivores,c.carnivores},placed=0; for(int s=0;s<3;++s)for(int n=0;n<counts[s];++n){int pos=rv(c.seed,-1,placed+n,s)%total;while(g[pos].species!=EMPTY)pos=(pos+1)%total;Species sp=s+1;g[pos]=(Cell){sp,sp==PLANT?1:sp==HERBIVORE?5:7,0,0};placed++;}
-    omp_set_num_threads(c.threads); FILE *out=output?fopen(output,"w"):stdout; if(!out){perror(output);return 1;}
-    fprintf(out,"Configuración: %dx%d, ticks=%d, threads=%d, seed=%llu\n\n",c.rows,c.cols,c.ticks,c.threads,(unsigned long long)c.seed); print_state(&c,g,0,out);
-    for(int tick=1;tick<=c.ticks;++tick){
-        #pragma omp parallel for schedule(static)
-        for(int i=0;i<total;++i)decide(&c,g,&actions[i],i,tick,c.seed);
-        apply_actions(&c,g,next,actions); Cell *tmp=g;g=next;next=tmp; print_state(&c,g,tick,out);
+
+static bool parse_cli(int argc, char **argv, CliConfig *config) {
+  /* La interfaz acepta exclusivamente pares --opción valor. */
+  for (int index = 1; index < argc; index += 2) {
+    if (index + 1 >= argc ||
+        !assign_option(config, argv[index], argv[index + 1])) {
+      return false;
     }
-    if (output) fclose(out);
-    free(g);
-    free(next);
-    free(actions);
-    return 0;
+  }
+  return true;
+}
+
+static bool population_fits(const CliConfig *config) {
+  uint64_t capacity = (uint64_t)(unsigned int)config->ecosystem.rows *
+                      (uint64_t)(unsigned int)config->ecosystem.cols;
+  uint64_t requested = (uint64_t)(unsigned int)config->population.plants +
+                       (uint64_t)(unsigned int)config->population.herbivores +
+                       (uint64_t)(unsigned int)config->population.carnivores;
+  return capacity <= (uint64_t)INT_MAX && requested <= capacity;
+}
+
+static bool memory_fits(const CliConfig *config) {
+  uint64_t required_bytes;
+
+  if (!ecosystem_required_bytes(config->ecosystem, &required_bytes)) {
+    fprintf(
+        stderr,
+        "Las dimensiones de la cuadrícula exceden los límites del motor.\n");
+    return false;
+  }
+  if (required_bytes > ECOSYSTEM_MEMORY_BUDGET_BYTES) {
+    fprintf(stderr,
+            "La cuadrícula requiere %" PRIu64
+            " bytes; el presupuesto del motor es %" PRIu64 " bytes.\n",
+            required_bytes, ECOSYSTEM_MEMORY_BUDGET_BYTES);
+    return false;
+  }
+  return true;
+}
+
+static bool run_simulation(Ecosystem *ecosystem, const CliConfig *config,
+                           FILE *output) {
+  if (fprintf(output, "Configuración: %dx%d, ticks=%d, seed=%" PRIu64 "\n\n",
+              config->ecosystem.rows, config->ecosystem.cols, config->ticks,
+              config->ecosystem.seed) < 0 ||
+      !ecosystem_print(ecosystem, 0, output)) {
+    return false;
+  }
+  for (int tick = 1; tick <= config->ticks;) {
+    if (!ecosystem_tick(ecosystem, tick) ||
+        !ecosystem_print(ecosystem, tick, output)) {
+      return false;
+    }
+    /* El último tick termina antes del incremento, incluso cuando vale INT_MAX.
+     */
+    if (tick == config->ticks) {
+      break;
+    }
+    ++tick;
+  }
+  return true;
+}
+
+int main(int argc, char **argv) {
+  CliConfig config = {{20, 40, 1, UINT64_C(20240820)}, {150, 40, 15}, 20, NULL};
+  Ecosystem *ecosystem;
+  FILE *output = stdout;
+  bool success;
+
+  if (!parse_cli(argc, argv, &config) || !population_fits(&config)) {
+    fprintf(stderr, "Configuración inválida o argumento mal formado.\n");
+    print_usage(argv[0]);
+    return 2;
+  }
+  if (!memory_fits(&config)) {
+    return 2;
+  }
+  ecosystem = ecosystem_create(config.ecosystem);
+  if (ecosystem == NULL) {
+    fprintf(stderr, "No se pudo reservar memoria para la cuadrícula.\n");
+    return 1;
+  }
+  if (!ecosystem_populate(ecosystem, config.population)) {
+    fprintf(stderr, "No se pudo inicializar la población solicitada.\n");
+    ecosystem_destroy(ecosystem);
+    return 1;
+  }
+  if (config.output_path != NULL) {
+    output = fopen(config.output_path, "w");
+    if (output == NULL) {
+      perror(config.output_path);
+      ecosystem_destroy(ecosystem);
+      return 1;
+    }
+  }
+
+  success = run_simulation(ecosystem, &config, output);
+  /* Cerrar o vaciar también forma parte del resultado observable de E/S. */
+  if (config.output_path != NULL && fclose(output) != 0) {
+    perror(config.output_path);
+    success = false;
+  } else if (config.output_path == NULL && fflush(output) != 0) {
+    perror("stdout");
+    success = false;
+  }
+  ecosystem_destroy(ecosystem);
+  if (!success) {
+    fprintf(stderr, "Falló la escritura de la simulación.\n");
+    return 1;
+  }
+  return 0;
 }
