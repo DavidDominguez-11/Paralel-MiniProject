@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "ecosystem.h"
 
 #include <errno.h>

@@ -14,10 +14,26 @@ set -- --rows 12 --cols 17 --ticks 8 --plants 60 --herbivores 20 \
 "$program" "$@" --threads 1 --output "$temporary_directory/one.txt"
 "$program" "$@" --threads 4 --output "$temporary_directory/four.txt"
 
-if ! cmp -s "$temporary_directory/one.txt" "$temporary_directory/four.txt"; then
+# Se excluyen metadatos de ejecución que legítimamente dependen del número de
+# hilos o de la carga del sistema; se compara la configuración del ecosistema,
+# sus estados por tick y la distribución de especies.
+sed -e '/^Configuración:/d' \
+    -e '/^Tiempo del tick /d' \
+    -e '/^Tiempo por hilo /d' \
+    -e '/^  Hilo /d' \
+    -e '/^Tiempo total del proceso:/d' \
+    "$temporary_directory/one.txt" >"$temporary_directory/one-state.txt"
+sed -e '/^Configuración:/d' \
+    -e '/^Tiempo del tick /d' \
+    -e '/^Tiempo por hilo /d' \
+    -e '/^  Hilo /d' \
+    -e '/^Tiempo total del proceso:/d' \
+    "$temporary_directory/four.txt" >"$temporary_directory/four-state.txt"
+
+if ! cmp -s "$temporary_directory/one-state.txt" "$temporary_directory/four-state.txt"; then
   printf '%s\n' \
-    "Fallo: la salida cambió al ejecutar el mismo escenario con 1 y 4 hilos." >&2
-  diff -u "$temporary_directory/one.txt" "$temporary_directory/four.txt" >&2
+    "Fallo: el estado cambió al ejecutar el mismo escenario con 1 y 4 hilos." >&2
+  diff -u "$temporary_directory/one-state.txt" "$temporary_directory/four-state.txt" >&2
   exit 1
 fi
 
